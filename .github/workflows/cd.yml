@@ -1,0 +1,132 @@
+name: CD
+
+on:
+  push:
+    branches: [master]
+  schedule:
+    - cron: '30 3 * * *'
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: 'Force container rebuild'
+        required: true
+        type: choice
+        options: [yes, no]
+
+permissions:
+  packages: write
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  AlmaLinux:
+    name: AlmaLinux
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        version: [ '8', '9', '10' ]
+    steps:
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check for rebuild
+        id: update_check
+        continue-on-error: true
+        run : |
+          # [update-check]
+
+          echo -e "::group::\033[34mChecking for packages updates…\033[0m"
+
+          if [[ "${{ github.event.inputs.force_rebuild }}" == "true" ]] ; then
+            echo "::warning::Rebuild ${{matrix.version}} (reason: forced rebuild)"
+            echo "build=true" >> $GITHUB_OUTPUT
+            exit 0
+          else
+            if ! docker pull "${{env.REGISTRY}}/${{github.repository}}:${{matrix.version}}" ; then
+              echo "::warning::Rebuild ${{matrix.version}} (reason: new image)"
+              echo "build=true" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+
+            if ! docker run --rm "${{env.REGISTRY}}/${{github.repository}}:${{matrix.version}}" dnf check-update ; then
+              echo "::warning::Rebuild ${{matrix.version}} (reason: packages update)"
+              echo "build=true" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          fi
+
+          echo "::endgroup::"
+
+          echo -e "::group::\033[34mChecking for rebuilt base image…\033[0m"
+          echo "Pulling almalinux:${{matrix.version}} from registry…"
+          echo ""
+
+          if ! docker pull "almalinux:${{matrix.version}}" ; then
+            echo "::error::Can't pull image almalinux:${{matrix.version}}"
+            exit 1
+          fi
+
+          orig_dig=$(docker inspect "almalinux:${{matrix.version}}" | jq -r '.[0].RootFS.Layers[0]')
+          our_dig=$(docker inspect "${{env.REGISTRY}}/${{github.repository}}:${{matrix.version}}" | jq -r '.[0].RootFS.Layers[0]')
+
+          echo ""
+          echo "Original: ${orig_dig}"
+          echo "Our:      ${our_dig}"
+
+          if [[ "$orig_dig" != "$our_dig" ]] ; then
+            echo "::warning::Rebuild ${{matrix.version}} (reason: rebuilt base image)"
+            echo "build=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "::endgroup::"
+
+      - name: Checkout
+        if: ${{ steps.update_check.outputs.build == 'true' }}
+        uses: actions/checkout@v4
+
+      - name: Set build context
+        if: ${{ steps.update_check.outputs.build == 'true' }}
+        id: build_context
+        run: |
+          echo "dockerfile=${{matrix.version}}.docker" >> $GITHUB_OUTPUT
+
+      - name: Rebuild and push image
+        if: ${{ steps.update_check.outputs.build == 'true' }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ steps.build_context.outputs.dockerfile }}
+          push: true
+          tags: |
+            ghcr.io/${{github.repository}}:${{matrix.version}}
+            ${{github.repository}}:${{matrix.version}}
+
+      - name: Show info about images
+        uses: essentialkaos/docker-info-action@v1
+        with:
+          image: ${{env.REGISTRY}}/${{github.repository}}:${{matrix.version}}
+
+      - name: Scan final image with Trivy
+        uses: aquasecurity/trivy-action@master
+        env:
+          TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db,aquasec/trivy-db,ghcr.io/aquasecurity/trivy-db
+        with:
+          image-ref: "${{env.REGISTRY}}/${{github.repository}}:${{matrix.version}}"
+          format: "table"
+          ignore-unfixed: true
+          severity: "LOW,MEDIUM,HIGH,CRITICAL"
+          scanners: "vuln"
