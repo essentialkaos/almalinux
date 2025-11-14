@@ -27,7 +27,7 @@ jobs:
 
     strategy:
       matrix:
-        version: [ '8', '9', '10' ]
+        version: [ '8', '8-minimal', '9', '9-minimal', '10', '10-minimal' ]
     steps:
       - name: Login to DockerHub
         uses: docker/login-action@v3
@@ -61,7 +61,15 @@ jobs:
               exit 0
             fi
 
-            if ! docker run --rm "${{env.REGISTRY}}/${{github.repository}}:${{matrix.version}}" dnf check-update ; then
+            check_command=""
+
+            if [[ "${{matrix.version}}" =~ ^.*-minimal$ ]] ; then
+              check_command="microdnf-check-update"
+            else
+              check_command="dnf check-update"
+            fi
+
+            if ! docker run --rm "${{env.REGISTRY}}/${{github.repository}}:${{matrix.version}}" $check_command ; then
               echo "::warning::Rebuild ${{matrix.version}} (reason: packages update)"
               echo "build=true" >> $GITHUB_OUTPUT
               exit 0

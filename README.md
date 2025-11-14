@@ -17,16 +17,22 @@ Using DockerHub:
 
 ```bash
 docker pull essentialkaos/almalinux:8
+docker pull essentialkaos/almalinux:8-minimal
 docker pull essentialkaos/almalinux:9
+docker pull essentialkaos/almalinux:9-minimal
 docker pull essentialkaos/almalinux:10
+docker pull essentialkaos/almalinux:10-minimal
 ```
 
 Using GitHub Container Registry:
 
 ```bash
 docker pull ghcr.io/essentialkaos/almalinux:8
+docker pull ghcr.io/essentialkaos/almalinux:8-minimal
 docker pull ghcr.io/essentialkaos/almalinux:9
+docker pull ghcr.io/essentialkaos/almalinux:9-minimal
 docker pull ghcr.io/essentialkaos/almalinux:10
+docker pull ghcr.io/essentialkaos/almalinux:10-minimal
 ```
 
 ### Contributing
